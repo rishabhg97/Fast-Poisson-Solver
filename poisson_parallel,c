@@ -1,0 +1,225 @@
+#include <math.h>
+#include <stdlib.h>
+#include <fftw3.h>
+#include <stdio.h>
+#include <mpi.h>
+#include <time.h>
+#define N 4096
+int D=1;
+int* dimensions;
+int L=1000;
+const double pi=M_PI;
+const double x_min=0.0;
+const double x_max=1.0;
+const double y_min=0.0;
+const double y_max=1.0;
+
+double f(double x,double y)
+{
+	
+	return 8.0*pi*pi*cos(4.0*pi*y)*(cos(4.0*pi*x) - sin(4.0*pi*x)) -16.0*pi*pi*(sin(4.0*pi*x)*cos(2.0*pi*y)*cos(2.0*pi*y) + 
+                       sin(2.0*pi*x)*sin(2.0*pi*x)* cos(4.0*pi*y));
+}
+void Creategrid(double **  grid)
+{
+	
+	//boundary
+	//x=0, f=0 x=1 f=0, y=0 == y=1
+
+	
+	int i=0;
+	for ( i = 0; i < N+2; ++i)
+	{
+		grid[i][N+1]=0;
+		grid[0][i]=0;
+		grid[N+1][i]=0;
+		grid[i][0]=0;
+	}
+	
+}
+
+void CreateFgrid(double ** f_grid,int my_rank, unsigned int partition, float * my_time)
+{
+	double dx=(x_max-x_min)/N;
+	double dy=(y_max-y_min)/N;
+	// for (int i = 0; i < N; ++i)
+	// {
+	// 	/* code */
+	// 	for (int j = 0; j< N; ++j)
+	// 	{
+	// 		/* code */
+
+	// 		f_grid[i][j]=f((i+0.5)*dx,(j+0.5)*dy);
+	// 		// printf("%lf %lf\n",(i+0.5)*dx,(j+0.5)*dy);
+	// 	}
+	// }
+	clock_t start;
+	start = clock();
+	
+	printf("Hello World from %d\n",my_rank);
+	int i;
+	for( i = my_rank*partition; i < my_rank*partition + partition; ++i){
+		f_grid[i/N][i%N] = f(((i/N)+0.5)*dx,((i%N)+0.5)*dy);
+	}
+	printf("Thread creategrid ended %d\n",my_rank);
+
+	clock_t end = clock();
+	*my_time += (float) (end-start) / CLOCKS_PER_SEC ;
+}
+// void freq(int *kx)
+// {
+// 	if (N%2==0)
+// 	{
+// 		/* code */
+// 		for (int i = 0; i < N; ++i)
+// 		{
+// 			/* code */
+
+// 		}
+// 	}
+// }
+
+void fft(double ** grid, double** f_grid,int my_rank, unsigned int partition, float * my_time)
+{
+
+	fftwl_complex *in,*out;
+	fftwl_plan my_plan;
+	in=(fftwl_complex*) fftwl_malloc(sizeof(fftwl_complex)*N*N);
+	out=(fftwl_complex*) fftwl_malloc(sizeof(fftwl_complex)*N*N);
+	int k=0;
+	int i,j;
+
+	clock_t start , end;
+	start = clock();
+	printf("Hello from forward fft rank %d\n",my_rank);
+	for( i = my_rank*partition; i < my_rank*partition + partition; ++i){
+		in[i][0]=f_grid[i/N][i%N];
+		in[i][1]=0;
+	}
+	
+
+	// int kx[N]=freq(N);
+	// int ky[N]=freq(N);
+	MPI_Barrier(MPI_COMM_WORLD);
+	end = clock();
+	*my_time += (float) (end-start) / CLOCKS_PER_SEC ;
+	
+	printf("end from forward fft rank %d\n",my_rank);
+	clock_t t1 = clock();
+	if (my_rank==0){
+		my_plan=fftwl_plan_dft_2d(N,N,in,out,FFTW_FORWARD,FFTW_ESTIMATE);
+		fftwl_execute(my_plan);
+		clock_t t2 = clock();
+		float t3 = (float)(t2-t1) / CLOCKS_PER_SEC;
+		printf("time taken here %.6f\n", t3 );
+	}
+
+
+	double dx=(x_max-x_min)/N;
+	double dy=(y_max-y_min)/N;
+	k=0;
+	long double a,b;
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	start = clock();
+	printf("Hello from backward fft rank %d\n",my_rank);
+	a=out[0][0];
+	b=out[0][1];
+	for( i = my_rank*partition; i < my_rank*partition + partition; ++i){
+		int ki=i/N;
+		int kj=i%N;
+		in[i][0]=out[i][0]/(2*((cos((2*pi*ki)/N))-1)/(dx*dx) + (cos((2*pi*kj)/N)-1)/(dy*dy) );
+		in[i][1]=out[i][1]/(2*((cos((2*pi*ki)/N))-1)/(dx*dx) + (cos((2*pi*kj)/N)-1)/(dy*dy) );
+	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	end = clock();
+	*my_time += (float) (end-start) / CLOCKS_PER_SEC ;
+	
+	
+	printf("fft backward thread ended rank %d\n",my_rank);
+
+	if (my_rank == 0){
+		in[0][0]=a;
+		in[0][1]=b;
+		my_plan=fftwl_plan_dft_2d(N,N,in,out,FFTW_BACKWARD,FFTW_ESTIMATE);
+		fftwl_execute(my_plan);
+		fftwl_free(in);
+		fftwl_free(out);
+		fftwl_destroy_plan(my_plan);
+	}
+}
+
+// // void forward_fft()
+// void backward_fft(fftwl_complex *in, fftwl_complex *out ,fftwl_plan my_plan )
+// {
+	
+// 	// for (int i = 0; i < N*N; ++i)
+// 	// {
+// 	// 		printf("%Lf %Lf %s\n",out[i][0],out[i][1],"output");
+// 	// 			// in[k][0]=f_grid[i][j];
+// 	// 			// in[k++][1]=0;
+
+		
+// 	// }	
+// }
+int main(int argc, char *argv[])
+{
+	
+	// int dy=L/dimensions[1];
+		// Create a grid
+	double ** grid;
+	double **f_grid;
+
+	//Initialising MPI Environment
+	
+
+	grid=calloc(N+2,sizeof(double*));
+	int i;
+	for ( i = 0; i < N+2; ++i)
+	{
+		grid[i]=calloc(N+2,sizeof(double));
+	}
+	f_grid=calloc(N,sizeof(double));
+	for ( i = 0; i < N; ++i)
+	{
+		f_grid[i]=calloc(N,sizeof(double));
+	}
+	// grid= malloc(size);
+	Creategrid(grid);
+
+	//Initialising MPI Environment
+	MPI_Init(&argc, &argv);
+
+	int my_rank, size;
+
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+	unsigned int partition = (N*N)/size;
+	float t = 0.0;
+	float * my_time = &t;
+	
+	CreateFgrid(f_grid,my_rank,partition,my_time);
+	
+	// MPI_Barrier(MPI_COMM_WORLD);
+
+	fft(grid,f_grid, my_rank, partition,my_time);
+
+	printf("time taken %.6f\n", t );
+	printf("Grid Created by rank %d\n",my_rank);
+	// for (int i = 0; i < N; ++i)
+	// {
+	// 	for (int j = 0; j < N; ++j)
+	// 	{
+	// 		printf("%lf\n",f_grid[i][j] );
+	// 			// in[k][0]=f_grid[i][j];
+	// 			// in[k++][1]=0;
+
+	// 	}
+	// }
+	// MPI_Barrier(MPI_COMM_WORLD);
+	MPI_Finalize();
+
+	// printf("ho gya %d\n",my_rank);
+	return 0;
+}
