@@ -1,7 +1,9 @@
 #include <math.h>
 #include <stdlib.h>
 #include <fftw3.h>
-#define N 8192
+#include <stdio.h>
+#include <mpi.h>
+#define N 64
 int D=1;
 int* dimensions;
 int L=1000;
@@ -17,11 +19,14 @@ double f(double x,double y)
 	return 8.0*pi*pi*cos(4.0*pi*y)*(cos(4.0*pi*x) - sin(4.0*pi*x)) -16.0*pi*pi*(sin(4.0*pi*x)*cos(2.0*pi*y)*cos(2.0*pi*y) + 
                        sin(2.0*pi*x)*sin(2.0*pi*x)* cos(4.0*pi*y));
 }
-void Creategrid(double **  grid,double ** f_grid)
+void Creategrid(double **  grid)
 {
 	
 	//boundary
 	//x=0, f=0 x=1 f=0, y=0 == y=1
+
+	
+
 	for (int i = 0; i < N+2; ++i)
 	{
 		grid[i][N+1]=0;
@@ -30,24 +35,29 @@ void Creategrid(double **  grid,double ** f_grid)
 		grid[i][0]=0;
 	}
 	
-	double dx=(x_max-x_min)/N;
-	double dy=(y_max-y_min)/N;
-	for (int i = 0; i < N; ++i)
-	{
-		/* code */
-		for (int j = 0; j< N; ++j)
-		{
-			/* code */
-
-			f_grid[i][j]=f((i+0.5)*dx,(j+0.5)*dy);
-			// printf("%lf %lf\n",(i+0.5)*dx,(j+0.5)*dy);
-		}
-	}
-
-
-
 }
 
+void CreateFgrid(double ** f_grid,int my_rank, unsigned int partition)
+{
+	double dx=(x_max-x_min)/N;
+	double dy=(y_max-y_min)/N;
+	// for (int i = 0; i < N; ++i)
+	// {
+	// 	/* code */
+	// 	for (int j = 0; j< N; ++j)
+	// 	{
+	// 		/* code */
+
+	// 		f_grid[i][j]=f((i+0.5)*dx,(j+0.5)*dy);
+	// 		// printf("%lf %lf\n",(i+0.5)*dx,(j+0.5)*dy);
+	// 	}
+	// }
+	
+	printf("Hello World from %d\n",my_rank);
+	for(int i = my_rank*partition; i < my_rank*partition + partition; ++i){
+		f_grid[i/N][i%N] = f(((i/N)+0.5)*dx,((i%N)+0.5)*dy);
+	}
+}
 // void freq(int *kx)
 // {
 // 	if (N%2==0)
@@ -69,6 +79,7 @@ void fft(double ** grid, double** f_grid)
 	in=(fftwl_complex*) fftwl_malloc(sizeof(fftwl_complex)*N*N);
 	out=(fftwl_complex*) fftwl_malloc(sizeof(fftwl_complex)*N*N);
 	int k=0;
+
 	for (int i = 0; i < N; ++i)
 	{
 		for (int j = 0; j < N; ++j)
@@ -120,18 +131,17 @@ void fft(double ** grid, double** f_grid)
 	fftwl_free(out);
 
 }
-int main(int argc, char const *argv[])
+int main(int argc, char *argv[])
 {
-	
-	
 	
 	// int dy=L/dimensions[1];
 		// Create a grid
-	double n;
-	n=f(0.3,0.3);
-	printf("%lf\n", n);
 	double ** grid;
 	double **f_grid;
+
+	//Initialising MPI Environment
+	
+
 	grid=calloc(N+2,sizeof(double*));
 	for (int i = 0; i < N+2; ++i)
 	{
@@ -143,7 +153,20 @@ int main(int argc, char const *argv[])
 		f_grid[i]=calloc(N,sizeof(double));
 	}
 	// grid= malloc(size);
-	Creategrid(grid,f_grid);
+	Creategrid(grid);
+
+	//Initialising MPI Environment
+	MPI_Init(&argc, &argv);
+
+	int my_rank, size;
+
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+	unsigned int partition = (N*N)/size;
+
+	CreateFgrid(f_grid,my_rank,partition);
+	MPI_Finalize();
 	// for (int i = 0; i < N; ++i)
 	// {
 	// 	for (int j = 0; j < N; ++j)
@@ -155,6 +178,5 @@ int main(int argc, char const *argv[])
 	// 	}
 	// }
 	fft(grid,f_grid);
-
 	return 0;
 }
